@@ -16,12 +16,13 @@ import numpy as np
 import tensorflow as tf
 import time
 from threading import Thread
+import pyautogui
 
 # Define VideoStream class to handle streaming of video from webcam in separate processing thread
 # Source - Adrian Rosebrock, PyImageSearch: https://www.pyimagesearch.com/2015/12/28/increasing-raspberry-pi-fps-with-python-and-opencv/
 class VideoStream:
     """Camera object that controls video streaming from the Picamera"""
-    def __init__(self,resolution=(450,300),framerate=30):
+    def __init__(self,resolution=(640,480),framerate=30):
         # Initialize the PiCamera and the camera image stream
         # May have to change to 0 or 1 depending on camera used
         self.stream = cv2.VideoCapture(1)
@@ -74,8 +75,9 @@ input_shape = input_details[0]['shape']
 cascade = cv2.CascadeClassifier('cascades1/cascade.xml')
 
 # Initialize video stream
-videostream = VideoStream(resolution=(450,300),framerate=30).start()
+videostream = VideoStream(framerate=30).start()
 time.sleep(1)
+(screenx, screeny) = pyautogui.size()
 
 
 while True:
@@ -86,7 +88,8 @@ while True:
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     # Use Haar classifier to detect hands
-    hands = cascade.detectMultiScale(gray,minNeighbors=5,minSize=(150,150))
+    # hands = cascade.detectMultiScale(gray,minNeighbors=5,minSize=(100,100), maxSize=(170,170))
+    hands = cascade.detectMultiScale(gray,minNeighbors=5,minSize=(200,200))
 
     # If more than one detections, choose first. MinNeighbors and minSize in above function, along
     # with how the model is trained should limit this being a problem
@@ -100,6 +103,14 @@ while True:
 
         # Draw rectangle on hand
         gray = cv2.rectangle(gray, (x_cord,y_cord), (x_cord+width,y_cord+height),(0.255,0),3)
+
+        # Draw center dot
+        gray = cv2.circle(gray, center, 5, color=(0, 0, 255), thickness=-1)
+        transformed_coordx = (center[0] * screenx) / 480
+        transformed_coordy = (center[1] * screeny) / 640
+
+        pyautogui.moveTo(transformed_coordx, transformed_coordy)
+
 
         # Get hand image and resize for tensorflow classifier
         crop = cv2.resize(frame[y_cord:y_cord+height,x_cord:x_cord+width],(160,160))
