@@ -79,6 +79,9 @@ videostream = VideoStream(framerate=30).start()
 time.sleep(1)
 (screenx, screeny) = pyautogui.size()
 
+# Set drag status
+drag = False
+
 
 while True:
     # Grab frame from video stream
@@ -88,8 +91,8 @@ while True:
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     # Use Haar classifier to detect hands
-    # hands = cascade.detectMultiScale(gray,minNeighbors=5,minSize=(100,100), maxSize=(170,170))
-    hands = cascade.detectMultiScale(gray,minNeighbors=5,minSize=(200,200))
+    hands = cascade.detectMultiScale(gray,minNeighbors=5,minSize=(100,100), maxSize=(170,170))
+    # hands = cascade.detectMultiScale(gray,minNeighbors=5,minSize=(200,200))
 
     # If more than one detections, choose first. MinNeighbors and minSize in above function, along
     # with how the model is trained should limit this being a problem
@@ -109,7 +112,10 @@ while True:
         transformed_coordx = (center[0] * screenx) / 480
         transformed_coordy = (center[1] * screeny) / 640
 
-        pyautogui.moveTo(transformed_coordx, transformed_coordy)
+        if drag:
+            pyautogui.dragTo(transformed_coordx, transformed_coordy)
+        else:
+            pyautogui.moveTo(transformed_coordx, transformed_coordy)
 
 
         # Get hand image and resize for tensorflow classifier
@@ -119,6 +125,10 @@ while True:
         interpreter.set_tensor(input_details[0]['index'], crop.reshape(1,160,160,3).astype('float32'))
         interpreter.invoke()
         output_data = interpreter.get_tensor(output_details[0]['index'])
+        if output_data > 0.0:
+            drag = False
+        else:
+            drag = True
 
 
     # Show frame in grayscale

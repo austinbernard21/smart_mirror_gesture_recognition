@@ -1,0 +1,43 @@
+#:kivy 1.8.0
+
+
+<ClockLayout>:
+    time: clocktime
+    date: clockdate 
+
+    drag_rectangle: self.x, self.y, self.width, self.height
+    drag_timeout: 10000000
+    drag_distance: 0
+
+    orientation: 'vertical'
+
+    ClockTime:
+        id: clocktime
+        pos: self.pos
+        size_hint: .2, .9
+        Label:
+            font: 'Roboto'
+            text: self.parent.time_str
+            pos: self.parent.pos
+            font_size: 60
+            markup: True
+    ClockDate:
+        id: clockdate
+        pos: self.pos
+        size_hint: .2, .1
+        Label:
+            font: 'Roboto'
+            text: self.parent.date_str
+            pos: self.parent.pos
+            font_size: 60
+            bold: True
+
+<MultipleLayout>:
+    clockObject: clocklayout
+
+    ClockLayout:
+        id: clocklayout
+        pos: root.width / 8, root.height * 3 / 4
+        
+
+            
