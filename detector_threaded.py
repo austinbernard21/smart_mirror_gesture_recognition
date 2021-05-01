@@ -22,10 +22,11 @@ import pyautogui
 # Source - Adrian Rosebrock, PyImageSearch: https://www.pyimagesearch.com/2015/12/28/increasing-raspberry-pi-fps-with-python-and-opencv/
 class VideoStream:
     """Camera object that controls video streaming from the Picamera"""
-    def __init__(self,resolution=(640,480),framerate=30):
+    def __init__(self,resolution=(450,300),framerate=30):
         # Initialize the PiCamera and the camera image stream
         # May have to change to 0 or 1 depending on camera used
-        self.stream = cv2.VideoCapture(1)
+        self.resolution = resolution
+        self.stream = cv2.VideoCapture(0,cv2.CAP_DSHOW)
         ret = self.stream.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         ret = self.stream.set(3,resolution[0])
         ret = self.stream.set(4,resolution[1])
@@ -61,83 +62,92 @@ class VideoStream:
 	# Indicate that the camera and thread should be stopped
         self.stopped = True
 
-
-# Define interpreter for TF lite
-interpreter = tf.lite.Interpreter('base_model.tflite')
-interpreter.allocate_tensors()
-
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-
-input_shape = input_details[0]['shape']
-
-# Define our trained Haar classifier
-cascade = cv2.CascadeClassifier('cascades1/cascade.xml')
-
-# Initialize video stream
-videostream = VideoStream(framerate=30).start()
-time.sleep(1)
-(screenx, screeny) = pyautogui.size()
-
-# Set drag status
-drag = False
+    def get_resolution(self):
+        return self.resolution
 
 
-while True:
-    # Grab frame from video stream
-    frame = videostream.read()
-
-    # Convert to gray for easier manipulations on images
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-    # Use Haar classifier to detect hands
-    hands = cascade.detectMultiScale(gray,minNeighbors=5,minSize=(100,100), maxSize=(170,170))
-    # hands = cascade.detectMultiScale(gray,minNeighbors=5,minSize=(200,200))
-
-    # If more than one detections, choose first. MinNeighbors and minSize in above function, along
-    # with how the model is trained should limit this being a problem
-    if len(hands) >= 1:
-        hand_example = hands[0]
-        # Grab coordinates of detected hand
-        (x_cord, y_cord, width, height) = hand_example
-
-        # print(f'x : {x_cord}, y: {y_cord}, width: {width}, height: {height}')
-        center = (x_cord + width//2, y_cord + height//2)  
-
-        # Draw rectangle on hand
-        gray = cv2.rectangle(gray, (x_cord,y_cord), (x_cord+width,y_cord+height),(0.255,0),3)
-
-        # Draw center dot
-        gray = cv2.circle(gray, center, 5, color=(0, 0, 255), thickness=-1)
-        transformed_coordx = (center[0] * screenx) / 480
-        transformed_coordy = (center[1] * screeny) / 640
-
-        if drag:
-            pyautogui.dragTo(transformed_coordx, transformed_coordy)
-        else:
-            pyautogui.moveTo(transformed_coordx, transformed_coordy)
+def run_detector():
 
 
-        # Get hand image and resize for tensorflow classifier
-        crop = cv2.resize(frame[y_cord:y_cord+height,x_cord:x_cord+width],(160,160))
+    # Define interpreter for TF lite
+    interpreter = tf.lite.Interpreter('base_model.tflite')
+    interpreter.allocate_tensors()
 
-        # Run classifier
-        interpreter.set_tensor(input_details[0]['index'], crop.reshape(1,160,160,3).astype('float32'))
-        interpreter.invoke()
-        output_data = interpreter.get_tensor(output_details[0]['index'])
-        if output_data > 0.0:
-            drag = False
-        else:
-            drag = True
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+
+    input_shape = input_details[0]['shape']
+
+    # Define our trained Haar classifier
+    cascade = cv2.CascadeClassifier('cascades1/cascade.xml')
+
+    # Initialize video stream
+    videostream = VideoStream(framerate=30).start()
+    time.sleep(1)
+    (screenx, screeny) = pyautogui.size()
+
+    # Set drag status
+    drag = False
 
 
-    # Show frame in grayscale
-    cv2.imshow('test', gray)
+    while True:
+        # Grab frame from video stream
+        frame = videostream.read()
 
-    # Press 'esc' to quit
-    if cv2.waitKey(1) == 27:
-        break
+        # Convert to gray for easier manipulations on images
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-# Stop stream and close windows
-cv2.destroyAllWindows()
-videostream.stop()
+        # Use Haar classifier to detect hands
+        hands = cascade.detectMultiScale(gray,minNeighbors=5,minSize=(100,100), maxSize=(170,170))
+        # hands = cascade.detectMultiScale(gray,minNeighbors=5,minSize=(200,200))
+
+        # If more than one detections, choose first. MinNeighbors and minSize in above function, along
+        # with how the model is trained should limit this being a problem
+        if len(hands) >= 1:
+            hand_example = hands[0]
+            # Grab coordinates of detected hand
+            (x_cord, y_cord, width, height) = hand_example
+
+            # print(f'x : {x_cord}, y: {y_cord}, width: {width}, height: {height}')
+            center = (x_cord + width//2, y_cord + height//2)  
+
+            # Draw rectangle on hand
+            gray = cv2.rectangle(gray, (x_cord,y_cord), (x_cord+width,y_cord+height),(0.255,0),3)
+
+            # Draw center dot
+            gray = cv2.circle(gray, center, 5, color=(0, 0, 255), thickness=-1)
+            transformed_coordx = (center[0] * screenx) / videostream.get_resolution()[1]
+            transformed_coordy = (center[1] * screeny) / videostream.get_resolution()[0]
+
+            if drag:
+                pass
+                # pyautogui.dragTo(transformed_coordx, transformed_coordy)
+            else:
+                pyautogui.moveTo(transformed_coordx, transformed_coordy)
+
+
+            # Get hand image and resize for tensorflow classifier
+            crop = cv2.resize(frame[y_cord:y_cord+height,x_cord:x_cord+width],(160,160))
+
+            # Run classifier
+            interpreter.set_tensor(input_details[0]['index'], crop.reshape(1,160,160,3).astype('float32'))
+            interpreter.invoke()
+            output_data = interpreter.get_tensor(output_details[0]['index'])
+            if output_data > 0.0:
+                drag = False
+            else:
+                drag = True
+
+
+        # Show frame in grayscale
+        # cv2.imshow('test', gray)
+
+        # Press 'esc' to quit
+        if cv2.waitKey(1) == 27:
+            break
+
+    # Stop stream and close windows
+    cv2.destroyAllWindows()
+    videostream.stop()
+
+# run_detector()
