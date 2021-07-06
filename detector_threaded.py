@@ -2,10 +2,12 @@
 #
 # Author: Austin Bernard
 # Date: 4/22/2021
-# Description: This code is a multithreaded application to run an object detection and gesture classification
-# pipeline using opencv Haar cascades and a Tensorflow lite model trained using transfer learning.
-# This code should work on a raspberry pi with a Camera attached. Depending on what camera is used, you may
-# have to change the cv2.VideoCapture parameter to 0 or 1
+# Description: This code is a multithreaded application to capture real time video streams
+# and use a custom tensorflow trained hand gesture detector to track 3 hand gestures, open, close, and pointing
+# and maps these to mouse controls like scroll, drag, and click respectively
+#
+# Baseline code if based off of Evan Juras Webcam Object Detection Using Tensorflow-trained Classifier
+# link to his code is here https://github.com/EdjeElectronics/TensorFlow-Lite-Object-Detection-on-Android-and-Raspberry-Pi/blob/master/TFLite_detection_webcam.py
 #
 # Tensorflow lite inferenece code based off of this resource:
 # https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/examples/python/label_image.py
@@ -13,16 +15,16 @@
 
 import cv2
 import numpy as np
-import tensorflow as tf
 import time
-from threading import Thread
 import pyautogui
+from tflite_runtime.interpreter import Interpreter
+from threading import Thread
 
 # Define VideoStream class to handle streaming of video from webcam in separate processing thread
 # Source - Adrian Rosebrock, PyImageSearch: https://www.pyimagesearch.com/2015/12/28/increasing-raspberry-pi-fps-with-python-and-opencv/
 class VideoStream:
     """Camera object that controls video streaming from the Picamera"""
-    def __init__(self,resolution=(450,300),framerate=30):
+    def __init__(self,resolution=(640,480),framerate=30):
         # Initialize the PiCamera and the camera image stream
         # May have to change to 0 or 1 depending on camera used
         self.resolution = resolution
@@ -68,9 +70,18 @@ class VideoStream:
 
 def run_detector():
 
+    # Path to label map file
+    PATH_TO_LABELS = 'label_map.pbtxt'
+
+    # Load the label map
+    with open(PATH_TO_LABELS, 'r') as f:
+        labels = [line.strip() for line in f.readlines()]
+
+    if labels[0] == '???':
+        del(labels[0])
 
     # Define interpreter for TF lite
-    interpreter = tf.lite.Interpreter('base_model.tflite')
+    interpreter = Interpreter('detect.tflite')
     interpreter.allocate_tensors()
 
     input_details = interpreter.get_input_details()
@@ -78,69 +89,91 @@ def run_detector():
 
     input_shape = input_details[0]['shape']
 
-    # Define our trained Haar classifier
-    cascade = cv2.CascadeClassifier('cascades1/cascade.xml')
+    input_mean = 127.5
+    input_std = 127.5
+
 
     # Initialize video stream
     videostream = VideoStream(framerate=30).start()
     time.sleep(1)
+
     (screenx, screeny) = pyautogui.size()
 
-    # Set drag status
-    drag = False
+    imW, imH = videostream.get_resolution()
 
+    min_conf_threshold = .5
+
+    action_map = {'close':'drag','open':'move','point':'click'}
+    current_action = action_map['open']
 
     while True:
         # Grab frame from video stream
         frame = videostream.read()
 
-        # Convert to gray for easier manipulations on images
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        # Use Haar classifier to detect hands
-        hands = cascade.detectMultiScale(gray,minNeighbors=5,minSize=(100,100), maxSize=(170,170))
-        # hands = cascade.detectMultiScale(gray,minNeighbors=5,minSize=(200,200))
+        img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # If more than one detections, choose first. MinNeighbors and minSize in above function, along
-        # with how the model is trained should limit this being a problem
-        if len(hands) >= 1:
-            hand_example = hands[0]
-            # Grab coordinates of detected hand
-            (x_cord, y_cord, width, height) = hand_example
+        img_resized = cv2.resize(img, (input_shape[1],input_shape[2]))
+        input_data = np.expand_dims(img_resized,axis=0)
+        input_data = (np.float32(input_data) - input_mean) / input_std
 
-            # print(f'x : {x_cord}, y: {y_cord}, width: {width}, height: {height}')
-            center = (x_cord + width//2, y_cord + height//2)  
+        interpreter.set_tensor(input_details[0]['index'],input_data)
+        interpreter.invoke()
 
-            # Draw rectangle on hand
-            gray = cv2.rectangle(gray, (x_cord,y_cord), (x_cord+width,y_cord+height),(0.255,0),3)
+        boxes = interpreter.get_tensor(output_details[0]['index'])[0] # Bounding box coordinates of detected objects
+        classes = interpreter.get_tensor(output_details[1]['index'])[0] # Class index of detected objects
+        scores = interpreter.get_tensor(output_details[2]['index'])[0] # Confidence of detected objects
 
-            # Draw center dot
-            gray = cv2.circle(gray, center, 5, color=(0, 0, 255), thickness=-1)
+        highest_score_index = np.argmax(scores)
+
+        score = scores[highest_score_index]
+        box = boxes[highest_score_index]
+        class_name = classes[highest_score_index]
+
+        if (score > min_conf_threshold) and (score <= 1.0):
+
+            current_action = action_map[labels[int(class_name)]]
+            
+
+            ymin = int(max(1,(box[0] * imH)))
+            xmin = int(max(1,(box[1] * imW)))
+            ymax = int(min(imH,(box[2] * imH)))
+            xmax = int(min(imW,(box[3] * imW)))
+
+            cv2.rectangle(frame, (xmin,ymin), (xmax,ymax), (10, 255, 0), 2)
+
+            # for center circle
+            height = ymax - ymin
+            width = xmax - xmin
+            center_x = xmin + width//2
+            center_y = ymin + height//2
+            center = (center_x, center_y)
+            cv2.circle(frame, center, 5, color=(0,0,255), thickness=-1)
+
             transformed_coordx = (center[0] * screenx) / videostream.get_resolution()[1]
+            # for inverted x coordinate
+            transformed_coordx = (screenx - transformed_coordx)
             transformed_coordy = (center[1] * screeny) / videostream.get_resolution()[0]
 
-            if drag:
-                pass
-                # pyautogui.dragTo(transformed_coordx, transformed_coordy)
-            else:
+            if current_action == 'drag':
+                pyautogui.mouseDown(transformed_coordx, transformed_coordy)
+            elif current_action == 'move':
+                pyautogui.mouseUp()
                 pyautogui.moveTo(transformed_coordx, transformed_coordy)
+            elif current_action == 'click':
+                pyautogui.moveTo(transformed_coordx, transformed_coordy)
+                pyautogui.click(interval=1) 
 
+            # Draw label
+            # object_name = labels[int(class_name)] # Look up object name from "labels" array using class index
+            # label = '%s: %d%%' % (object_name, int(score*100)) # Example: 'person: 72%'
+            # labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2) # Get font size
+            # label_ymin = max(ymin, labelSize[1] + 10) # Make sure not to draw label too close to top of window
+            # cv2.rectangle(frame, (xmin, label_ymin-labelSize[1]-10), (xmin+labelSize[0], label_ymin+baseLine-10), (255, 255, 255), cv2.FILLED) # Draw white box to put label text in
+            # cv2.putText(frame, label, (xmin, label_ymin-7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2) # Draw label text
 
-            # Get hand image and resize for tensorflow classifier
-            crop = cv2.resize(frame[y_cord:y_cord+height,x_cord:x_cord+width],(160,160))
-
-            # Run classifier
-            interpreter.set_tensor(input_details[0]['index'], crop.reshape(1,160,160,3).astype('float32'))
-            interpreter.invoke()
-            output_data = interpreter.get_tensor(output_details[0]['index'])
-            if output_data > 0.0:
-                drag = False
-            else:
-                drag = True
-
-
-        # Show frame in grayscale
-        # cv2.imshow('test', gray)
+        # Show frame
+        # cv2.imshow('test', frame)
 
         # Press 'esc' to quit
         if cv2.waitKey(1) == 27:
