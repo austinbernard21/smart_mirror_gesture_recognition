@@ -18,6 +18,10 @@ import numpy as np
 import time
 import pyautogui
 from threading import Thread
+import mediapipe as mp
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
+mp_hands = mp.solutions.hands
 
 # Define VideoStream class to handle streaming of video from webcam in separate processing thread
 # Source - Adrian Rosebrock, PyImageSearch: https://www.pyimagesearch.com/2015/12/28/increasing-raspberry-pi-fps-with-python-and-opencv/
@@ -69,28 +73,10 @@ class VideoStream:
 
 def run_detector():
 
-    # Path to label map file
-    PATH_TO_LABELS = 'label_map.pbtxt'
-
-    # Load the label map
-    with open(PATH_TO_LABELS, 'r') as f:
-        labels = [line.strip() for line in f.readlines()]
-
-    if labels[0] == '???':
-        del(labels[0])
-
-    # Define interpreter for TF lite
-    interpreter = Interpreter('detect.tflite')
-    interpreter.allocate_tensors()
-
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
-
-    input_shape = input_details[0]['shape']
-
-    input_mean = 127.5
-    input_std = 127.5
-
+    # Define model
+    hands = mp_hands.Hands(model_complexity=0,
+                           min_detection_confidence=0.5,
+                           min_tracking_confidence=0.5)
 
     # Initialize video stream
     videostream = VideoStream(framerate=30).start()
@@ -98,78 +84,45 @@ def run_detector():
 
     (screenx, screeny) = pyautogui.size()
 
-    imW, imH = videostream.get_resolution()
-
-    min_conf_threshold = .5
-
-    action_map = {'close':'drag','open':'move','point':'click'}
-    current_action = action_map['open']
+    x_mouse = 0
+    y_mouse = 0
 
     while True:
         # Grab frame from video stream
-        frame = videostream.read()
+        image = videostream.read()
+
+        # To improve performance, optionally mark the image as not writeable to
+        # pass by reference.
+        image.flags.writeable = False
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        results = hands.process(image)
+
+        # Draw the hand annotations on the image.
+        image.flags.writeable = True
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        image_width, image_height, _ = image.shape
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                mp_drawing.draw_landmarks(
+                    image,
+                    hand_landmarks,
+                    mp_hands.HAND_CONNECTIONS,
+                    mp_drawing_styles.get_default_hand_landmarks_style(),
+                    mp_drawing_styles.get_default_hand_connections_style())
+                x_mouse = int(hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP].x * image_width)
+                y_mouse = int(hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP].y * image_height)
+
+            # Flip the image horizontally for a selfie-view display.
+            cv2.imshow('MediaPipe Hands', cv2.flip(image, 1))
 
 
-        img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        transformed_coordx = (x_mouse * screenx) / videostream.get_resolution()[1]
+        # for inverted x coordinate
+        transformed_coordx = (screenx - transformed_coordx)
+        transformed_coordy = (y_mouse * screeny) / videostream.get_resolution()[0]
 
-        img_resized = cv2.resize(img, (input_shape[1],input_shape[2]))
-        input_data = np.expand_dims(img_resized,axis=0)
-        input_data = (np.float32(input_data) - input_mean) / input_std
-
-        interpreter.set_tensor(input_details[0]['index'],input_data)
-        interpreter.invoke()
-
-        boxes = interpreter.get_tensor(output_details[0]['index'])[0] # Bounding box coordinates of detected objects
-        classes = interpreter.get_tensor(output_details[1]['index'])[0] # Class index of detected objects
-        scores = interpreter.get_tensor(output_details[2]['index'])[0] # Confidence of detected objects
-
-        highest_score_index = np.argmax(scores)
-
-        score = scores[highest_score_index]
-        box = boxes[highest_score_index]
-        class_name = classes[highest_score_index]
-
-        if (score > min_conf_threshold) and (score <= 1.0):
-
-            current_action = action_map[labels[int(class_name)]]
+        pyautogui.moveTo(transformed_coordx, transformed_coordy)
             
-
-            ymin = int(max(1,(box[0] * imH)))
-            xmin = int(max(1,(box[1] * imW)))
-            ymax = int(min(imH,(box[2] * imH)))
-            xmax = int(min(imW,(box[3] * imW)))
-
-            cv2.rectangle(frame, (xmin,ymin), (xmax,ymax), (10, 255, 0), 2)
-
-            # for center circle
-            height = ymax - ymin
-            width = xmax - xmin
-            center_x = xmin + width//2
-            center_y = ymin + height//2
-            center = (center_x, center_y)
-            cv2.circle(frame, center, 5, color=(0,0,255), thickness=-1)
-
-            transformed_coordx = (center[0] * screenx) / videostream.get_resolution()[1]
-            # for inverted x coordinate
-            transformed_coordx = (screenx - transformed_coordx)
-            transformed_coordy = (center[1] * screeny) / videostream.get_resolution()[0]
-
-            if current_action == 'drag':
-                pyautogui.mouseDown(transformed_coordx, transformed_coordy)
-            elif current_action == 'move':
-                pyautogui.mouseUp()
-                pyautogui.moveTo(transformed_coordx, transformed_coordy)
-            elif current_action == 'click':
-                pyautogui.moveTo(transformed_coordx, transformed_coordy)
-                pyautogui.click(interval=1) 
-
-            # Draw label
-            # object_name = labels[int(class_name)] # Look up object name from "labels" array using class index
-            # label = '%s: %d%%' % (object_name, int(score*100)) # Example: 'person: 72%'
-            # labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2) # Get font size
-            # label_ymin = max(ymin, labelSize[1] + 10) # Make sure not to draw label too close to top of window
-            # cv2.rectangle(frame, (xmin, label_ymin-labelSize[1]-10), (xmin+labelSize[0], label_ymin+baseLine-10), (255, 255, 255), cv2.FILLED) # Draw white box to put label text in
-            # cv2.putText(frame, label, (xmin, label_ymin-7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2) # Draw label text
 
         # Show frame
         # cv2.imshow('test', frame)

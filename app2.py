@@ -25,7 +25,7 @@ import datetime
 from threading import Thread
 import pyautogui
 
-# import detector_threaded
+import detector_threaded
 
 
 Window.clearcolor = (1, 1, 1, 1)

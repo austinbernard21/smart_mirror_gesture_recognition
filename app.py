@@ -12,7 +12,7 @@ from kivy.core.text import LabelBase
 from kivy.core.window import Window
 import datetime
 from threading import Thread
-# import detector_threaded
+import detector_threaded
 
 
 
@@ -71,9 +71,9 @@ class Multiple_LayoutApp(App):
       
 
 if __name__ == '__main__':
-    # t = Thread(target=detector_threaded.run_detector)
-    # t.daemon = True
-    # t.start()
+    t = Thread(target=detector_threaded.run_detector)
+    t.daemon = True
+    t.start()
     # Window.fullscreen = True
     LabelBase.register(name='Roboto',
                    fn_regular='fonts/Roboto-Thin.ttf',
