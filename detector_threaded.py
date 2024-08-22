@@ -17,7 +17,6 @@ import cv2
 import numpy as np
 import time
 import pyautogui
-from tflite_runtime.interpreter import Interpreter
 from threading import Thread
 
 # Define VideoStream class to handle streaming of video from webcam in separate processing thread
